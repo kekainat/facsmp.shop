@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FacSMP — Магазин Игроков</title>
+    <script src="https://jsdelivr.net"></script>
+    <script src="https://cloudflare.com"></script>
+    <style>
+        body { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI', Roboto, sans-serif; }
+        .mc-card { background-color: #1e1e1e; border: 2px solid #333; }
+        .mc-btn { background-color: #3f6e2d; transition: background 0.2s; }
+        .mc-btn:hover { background-color: #4d8736; }
+    </style>
+</head>
+<body class="p-6">
+
+    <header class="max-w-4xl mx-auto flex justify-between items-center mb-8 pb-4 border-b border-gray-800">
+        <div>
+            <h1 class="text-3xl font-bold text-green-500 tracking-wide">FacSMP SHOP</h1>
+            <p class="text-sm text-gray-400">Магазин от простых игроков сервера</p>
+        </div>
+        <button id="loginBtn" onclick="toggleAdminPanel()" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded text-sm cursor-pointer">Войти как Админ</button>
+    </header>
+
+    <!-- Админка -->
+    <section id="adminSection" class="max-w-4xl mx-auto mc-card p-6 rounded-lg mb-8 hidden">
+        <h2 class="text-xl font-bold mb-4 text-yellow-500">Панель управления (Бэкенд Авто-GitHub)</h2>
+        
+        <div id="authForm" class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+                <input type="text" id="username" placeholder="Ник (kolor_2x / reraip3421)" class="bg-black p-2 rounded border border-gray-700 text-sm focus:outline-none">
+                <input type="password" id="password" placeholder="Пароль от админки" class="bg-black p-2 rounded border border-gray-700 text-sm focus:outline-none">
+            </div>
+            <button onclick="login()" class="mc-btn px-4 py-2 rounded font-bold w-full text-white cursor-pointer">Авторизоваться</button>
+        </div>
+
+        <div id="adminControls" class="hidden space-y-4 mt-4">
+            <p class="text-green-400 text-sm">Привет, <span id="currentAdmin"></span>! Токен успешно подключен.</p>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <input type="text" id="prodName" placeholder="Название предмета" class="bg-black p-2 rounded border border-gray-700 text-sm">
+                <input type="text" id="prodPrice" placeholder="Цена (например: 5 алмов)" class="bg-black p-2 rounded border border-gray-700 text-sm">
+                <input type="number" id="prodCount" placeholder="Кол-во (штук)" class="bg-black p-2 rounded border border-gray-700 text-sm">
+                <input type="text" id="prodImg" placeholder="Ссылка на иконку" class="bg-black p-2 rounded border border-gray-700 text-sm">
+            </div>
+            <div class="flex gap-4">
+                <button onclick="addItem()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-bold text-sm cursor-pointer">Добавить предмет</button>
+                <button onclick="saveToBackend()" id="saveBtn" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded font-bold text-sm cursor-pointer">💾 Сохранить изменения на Бэкенд</button>
+            </div>
+            <p id="statusText" class="text-xs text-gray-400 mt-2"></p>
+        </div>
+    </section>
+
+    <!-- Витрина -->
+    <main class="max-w-4xl mx-auto">
+        <h2 class="text-xl font-semibold mb-6 flex items-center gap-2">
+            <span class="inline-block w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
+            Товары на сервере FacSMP:
+        </h2>
+        <div id="productsGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6"></div>
+    </main>
+
+    <script>
+        // === ВАЖНО: ЗАМЕНИ ЭТО НА СВОЙ НИК НА ГИТХАБЕ ===
+        const GH_USER = "ТВОЙ_НИК_НА_GITHUB"; 
+        
+        const GH_REPO = "facsmp-backend";
+        const GH_FILE = "database.json";
+        
+        // Твой секретный токен, который ты скинул, теперь намертво вшит в код бэкенда
+        const adminToken = "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";
+
+        const CRYPTO_KEY = "FacSMP_Secret_Key_2026"; 
+        const ALLOWED_ADMINS = {
+            "kolor_2x": "0695679900c4033878b2746487e412be3f5481fd279261ff4fbf50bc3d39589d", // Пароль: facsmp123
+            "reraip3421": "0695679900c4033878b2746487e412be3f5481fd279261ff4fbf50bc3d39589d" // Пароль: facsmp123
+        };
+
+        let products = [];
+        let currentSha = ""; 
+        let isAuthorized = false;
+
+        // Автозагрузка базы из бэкенд-репозитория
+        async function loadFromBackend() {
+            const url = `https://github.com{GH_USER}/${GH_REPO}/contents/${GH_FILE}`;
+            try {
+                const response = await fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
+                if (!response.ok) throw new Error("Файл БД не найден");
+                
+                const data = await response.json();
+                currentSha = data.sha; 
+                
+                // Декодируем Base64
+                const encryptedText = JSON.parse(atob(data.content)); 
+                
+                if (encryptedText) {
+                    // Расшифровываем товары
+                    const bytes = CryptoJS.AES.decrypt(encryptedText, CRYPTO_KEY);
+                    products = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+                }
+                renderProducts();
+            } catch (e) {
+                console.log("База пуста, выводим заглушку.", e);
+                products = [{ id: "1", name: "Элитры", price: "10 алмов", count: 1, img: "" }];
+                renderProducts();
+            }
+        }
+
+        function renderProducts() {
+            const grid = document.getElementById('productsGrid');
+            grid.innerHTML = '';
+            products.forEach((p, index) => {
+                const isOut = p.count <= 0;
+                grid.innerHTML += `
+                    <div class="mc-card p-4 rounded-lg flex flex-col justify-between relative ${isOut ? 'opacity-40' : ''}">
+                        <div>
+                            <img src="${p.img || 'https://minecraft.wiki'}" class="w-14 h-14 mx-auto object-contain mb-4">
+                            <h3 class="font-bold text-base text-white">${p.name}</h3>
+                            <p class="text-xs text-green-400 font-mono mt-1">Цена: ${p.price}</p>
+                        </div>
+                        <div class="flex justify-between items-center pt-2 mt-4 border-t border-gray-800 text-xs">
+                            <span class="text-gray-400">В наличии: <b>${p.count} шт.</b></span>
+                            ${isAuthorized ? `<button onclick="deleteItem(${index})" class="text-red-500 hover:underline cursor-pointer">Удалить</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        // Вход по нику и паролю
+        function login() {
+            const user = document.getElementById('username').value.trim();
+            const pass = document.getElementById('password').value;
+            const passHash = CryptoJS.SHA256(pass).toString();
+
+            if (ALLOWED_ADMINS[user] && ALLOWED_ADMINS[user] === passHash) {
+                isAuthorized = true;
+                document.getElementById('authForm').classList.add('hidden');
+                document.getElementById('adminControls').classList.remove('hidden');
+                document.getElementById('currentAdmin').innerText = user;
+                renderProducts(); 
+            } else {
+                alert("Неверный ник админа или пароль магазина!");
+            }
+        }
+
+        function addItem() {
+            const name = document.getElementById('prodName').value.trim();
+            const price = document.getElementById('prodPrice').value.trim();
+            const count = parseInt(document.getElementById('prodCount').value) || 0;
+            const img = document.getElementById('prodImg').value.trim();
+
+            if (!name || !price) return alert("Введите название и цену!");
+
+            products.push({ id: Date.now().toString().slice(-4), name, price, count, img });
+            renderProducts();
+        }
+
+        function deleteItem(index) {
+            products.splice(index, 1);
+            renderProducts();
+        }
+
+        // Запись в бэкенд по API используя вшитый токен
+        async function saveToBackend() {
+            const status = document.getElementById('statusText');
+            status.innerText = "Сохранение на бэкенд...";
+            
+            const encryptedText = CryptoJS.AES.encrypt(JSON.stringify(products), CRYPTO_KEY).toString();
+            const base64Content = btoa(JSON.stringify(encryptedText));
+            const url = `https://github.com{GH_USER}/${GH_REPO}/contents/${GH_FILE}`;
+            
+            try {
+                const response = await fetch(url, {
+                    method: "PUT",
+                    headers: {
+                        "Authorization": `Bearer ${adminToken}`,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        message: "Обновление товаров магазина FacSMP",
+                        content: base64Content,
+                        sha: currentSha
+                    })
+                });
+
+                if (response.ok) {
+                    const resData = await response.json();
+                    currentSha = resData.content.sha; 
+                    status.innerText = "✅ База данных успешно обновлена на бэкенде!";
+                    status.className = "text-xs text-green-400 mt-2";
+                } else {
+                    const err = await response.json();
+throw new Error(err.message);}} catch (e) {status.innerText = "❌ Ошибка сохранения: " + e.message;status.className = "text-xs text-red-500 mt-2";}}function toggleAdminPanel() { document.getElementById('adminSection').classList.toggle('hidden'); }window.onload = loadFromBackend;
